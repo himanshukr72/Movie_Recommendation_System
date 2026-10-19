@@ -1,0 +1,12 @@
+.env
+.env.*
+
+# Virtual environments
+.venv/
+venv/
+env/
+vcenv/
+
+# Data
+data/
+Data/
