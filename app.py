@@ -4,7 +4,9 @@ import json
 import re
 import unicodedata
 from pathlib import Path
+from tempfile import gettempdir
 
+import gdown
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -19,7 +21,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 st.set_page_config(page_title="Hybrid Movie Recommender", page_icon="🎬", layout="wide")
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DATA_PATH = PROJECT_ROOT / "Data" / "tmdb" / "tmdb_movies_Dataset.csv"
+GOOGLE_DRIVE_FILE_ID = "1dpy1mRNb9TtrTTsB6tB-KwJbEzINwsvr"
+DATA_PATH = Path(gettempdir()) / "tmdb_movies_Dataset.csv"
 BGE_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 
@@ -34,6 +37,31 @@ DEFAULT_WEIGHTS = {
     "country": 0.03,
     "language": 0.02,
 }
+
+
+
+@st.cache_resource(show_spinner="Downloading movie dataset from Google Drive...")
+def ensure_dataset() -> str:
+    """Download the combined CSV to temporary storage when it is not present."""
+    if DATA_PATH.exists() and DATA_PATH.stat().st_size > 0:
+        return str(DATA_PATH)
+
+    DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+    downloaded_path = gdown.download(
+        id=GOOGLE_DRIVE_FILE_ID,
+        output=str(DATA_PATH),
+        quiet=False,
+    )
+
+    if not downloaded_path or not DATA_PATH.exists() or DATA_PATH.stat().st_size == 0:
+        if DATA_PATH.exists():
+            DATA_PATH.unlink()
+        raise RuntimeError(
+            "Google Drive did not provide the CSV. Confirm the file is shared as "
+            "'Anyone with the link — Viewer' and that download limits have not been reached."
+        )
+
+    return str(DATA_PATH)
 
 
 # ============================================================
@@ -341,20 +369,21 @@ def recommend_movies(
 st.title("🎬 Hybrid Movie Recommendation System")
 st.caption("Your notebook's BGE + feature-specific TF-IDF hybrid recommender, wrapped in Streamlit.")
 
-if not DATA_PATH.exists():
-    st.error(f"Dataset not found: {DATA_PATH}")
-    st.info("Place tmdb_movies_Dataset.csv inside Data/tmdb/ in the project root.")
+try:
+    dataset_path = ensure_dataset()
+except Exception as exc:
+    st.error(f"Could not obtain the movie dataset: {exc}")
     st.stop()
 
 with st.spinner("Loading dataset, TF-IDF feature matrices, and BGE embeddings. The first run can take a while..."):
     try:
-        movies, model_df, feature_text, feature_vectorizers, feature_matrices, bge_model, bge_embeddings = load_recommender(str(DATA_PATH))
+        movies, model_df, feature_text, feature_vectorizers, feature_matrices, bge_model, bge_embeddings = load_recommender(dataset_path)
     except Exception as exc:
         st.exception(exc)
         st.stop()
 
 st.success(f"Loaded {len(model_df):,} movies and built the hybrid recommendation model.")
-st.caption(f"Dataset: `{DATA_PATH.relative_to(PROJECT_ROOT)}` · BGE model: `{BGE_MODEL_NAME}`")
+st.caption(f"Dataset: Google Drive CSV · BGE model: `{BGE_MODEL_NAME}`")
 
 titles = sorted(model_df["title"].dropna().astype(str).unique().tolist())
 directors = sorted({x for x in model_df["director"].dropna().astype(str) if x.strip()})
